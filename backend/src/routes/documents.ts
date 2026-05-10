@@ -135,7 +135,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const auth = req.auth!;
     const doc = await prisma.document.findUnique({
-      where: { id: req.params.id },
+      where: { id: String(req.params.id) },
       include: {
         rfi: { include: { project: true } },
         catalogueItem: { include: { supplier: true } },
@@ -175,7 +175,7 @@ router.delete(
   asyncHandler(async (req, res) => {
     const auth = req.auth!;
     const doc = await prisma.document.findUnique({
-      where: { id: req.params.id },
+      where: { id: String(req.params.id) },
       include: {
         rfi: { include: { project: true } },
         catalogueItem: { include: { supplier: true } },

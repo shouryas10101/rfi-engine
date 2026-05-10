@@ -98,7 +98,7 @@ router.post(
   requireRole("TML_ADMIN", "TML_ENGINEER"),
   asyncHandler(async (req, res) => {
     const inv = await prisma.invitation.findFirst({
-      where: { id: req.params.id, tenantId: req.auth!.tenantId },
+      where: { id: String(req.params.id), tenantId: req.auth!.tenantId },
     });
     if (!inv) {
       res.status(404).json({ error: "not_found" });
@@ -120,7 +120,7 @@ router.get(
   "/onboard/:token",
   asyncHandler(async (req, res) => {
     const inv = await prisma.invitation.findUnique({
-      where: { token: req.params.token },
+      where: { token: String(req.params.token) },
       include: {
         tenant: { select: { name: true } },
         issuedBy: { select: { email: true, fullName: true } },
@@ -155,7 +155,7 @@ router.post(
   "/onboard/:token",
   asyncHandler(async (req, res) => {
     const body = AcceptSchema.parse(req.body);
-    const inv = await prisma.invitation.findUnique({ where: { token: req.params.token } });
+    const inv = await prisma.invitation.findUnique({ where: { token: String(req.params.token) } });
     if (!inv || inv.status !== "pending" || inv.expiresAt < new Date()) {
       res.status(404).json({ error: "invalid_or_expired_invitation" });
       return;

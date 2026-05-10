@@ -48,7 +48,7 @@ router.get(
   "/:id",
   asyncHandler(async (req, res) => {
     const project = await prisma.project.findFirst({
-      where: { id: req.params.id, tenantId: req.auth!.tenantId },
+      where: { id: String(req.params.id), tenantId: req.auth!.tenantId },
       include: {
         rfis: { orderBy: { createdAt: "desc" } },
         bidlist: { include: { supplier: true } },
@@ -70,7 +70,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const body = AddBidlistSchema.parse(req.body);
     const project = await prisma.project.findFirst({
-      where: { id: req.params.id, tenantId: req.auth!.tenantId },
+      where: { id: String(req.params.id), tenantId: req.auth!.tenantId },
     });
     if (!project) {
       res.status(404).json({ error: "project_not_found" });
