@@ -1,0 +1,298 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  TML_ADMIN
+  TML_ENGINEER
+  SUPPLIER_ENGINEER
+}
+
+enum Phase {
+  general
+  must_have
+  good_to_have
+  subjective
+  completed
+}
+
+enum SessionStatus {
+  pending
+  active
+  paused
+  completed
+  failed_veto
+  abandoned
+}
+
+enum Verdict {
+  pass
+  fail
+  partial
+  not_applicable
+}
+
+enum EvaluatedBy {
+  deterministic
+  llm
+  none
+}
+
+enum AuthorRole {
+  tml_agent
+  supplier_agent
+  tml_user
+  supplier_user
+  system
+}
+
+enum DocumentScope {
+  rfi
+  catalogue_item
+  turn
+}
+
+enum InvitationStatus {
+  pending
+  accepted
+  revoked
+  expired
+}
+
+model Tenant {
+  id          String       @id @default(cuid())
+  name        String
+  slug        String       @unique
+  createdAt   DateTime     @default(now())
+  users       User[]
+  projects    Project[]
+  suppliers   Supplier[]
+  invitations Invitation[]
+}
+
+model User {
+  id                String       @id @default(cuid())
+  tenantId          String
+  tenant            Tenant       @relation(fields: [tenantId], references: [id])
+  email             String       @unique
+  fullName          String?
+  passwordHash      String
+  role              Role
+  supplierId        String?
+  supplier          Supplier?    @relation(fields: [supplierId], references: [id])
+  createdAt         DateTime     @default(now())
+  sessions          Session[]
+  turns             Turn[]
+  uploadedDocs      Document[]
+  issuedInvitations Invitation[] @relation("IssuedBy")
+
+  @@index([tenantId])
+}
+
+model Project {
+  id           String         @id @default(cuid())
+  tenantId     String
+  tenant       Tenant         @relation(fields: [tenantId], references: [id])
+  name         String
+  vehicleType  String
+  sop          DateTime?
+  targetMarket String?
+  createdAt    DateTime       @default(now())
+  rfis         RFI[]
+  bidlist      BidlistEntry[]
+
+  @@index([tenantId])
+}
+
+model RFI {
+  id                String         @id @default(cuid())
+  projectId         String
+  project           Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title             String
+  componentCategory String
+  status            String         @default("draft")
+  createdAt         DateTime       @default(now())
+  parameters        RFIParameter[]
+  sessions          Session[]
+  documents         Document[]
+
+  @@index([projectId])
+  @@index([componentCategory])
+}
+
+model RFIParameter {
+  id         String              @id @default(cuid())
+  rfiId      String
+  rfi        RFI                 @relation(fields: [rfiId], references: [id], onDelete: Cascade)
+  phase      Phase
+  importance String
+  key        String
+  label      String
+  type       String
+  spec       Json
+  weight     Float               @default(1.0)
+  ordering   Int
+  responses  ParameterResponse[]
+
+  @@unique([rfiId, key])
+  @@index([rfiId, phase])
+}
+
+model Supplier {
+  id           String          @id @default(cuid())
+  tenantId     String
+  tenant       Tenant          @relation(fields: [tenantId], references: [id])
+  name         String
+  contactEmail String
+  createdAt    DateTime        @default(now())
+  catalogue    CatalogueItem[]
+  bidlist      BidlistEntry[]
+  sessions     Session[]
+  users        User[]
+
+  @@index([tenantId])
+}
+
+model BidlistEntry {
+  id         String   @id @default(cuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id])
+  createdAt  DateTime @default(now())
+
+  @@unique([projectId, supplierId])
+}
+
+model CatalogueItem {
+  id                String     @id @default(cuid())
+  supplierId        String
+  supplier          Supplier   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  componentCategory String
+  productCode       String
+  parameters        Json
+  createdAt         DateTime   @default(now())
+  documents         Document[]
+
+  @@index([supplierId, componentCategory])
+}
+
+model Session {
+  id              String              @id @default(cuid())
+  rfiId           String
+  rfi             RFI                 @relation(fields: [rfiId], references: [id], onDelete: Cascade)
+  supplierId      String
+  supplier        Supplier            @relation(fields: [supplierId], references: [id])
+  initiatedBy     String
+  user            User                @relation(fields: [initiatedBy], references: [id])
+  catalogueItemId String?
+  currentPhase    Phase               @default(general)
+  status          SessionStatus       @default(pending)
+  startedAt       DateTime            @default(now())
+  activatedAt     DateTime?
+  completedAt     DateTime?
+  turns           Turn[]
+  responses       ParameterResponse[]
+  reports         ComplianceReport[]
+
+  @@unique([rfiId, supplierId])
+  @@index([supplierId, status])
+}
+
+model Turn {
+  id             String     @id @default(cuid())
+  sessionId      String
+  session        Session    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  authorRole     AuthorRole
+  userId         String?
+  user           User?      @relation(fields: [userId], references: [id])
+  parameterId    String?
+  content        String
+  supersededById String?
+  supersededBy   Turn?      @relation("Supersession", fields: [supersededById], references: [id])
+  superseded     Turn[]     @relation("Supersession")
+  citations      Json?
+  createdAt      DateTime   @default(now())
+  documents      Document[]
+
+  @@index([sessionId, createdAt])
+}
+
+model ParameterResponse {
+  id                   String       @id @default(cuid())
+  sessionId            String
+  session              Session      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  parameterId          String
+  parameter            RFIParameter @relation(fields: [parameterId], references: [id])
+  rawResponse          String
+  parsedValue          Json?
+  verdict              Verdict
+  confidence           Float
+  rationale            String
+  modificationDistance Float        @default(0)
+  evaluatedBy          EvaluatedBy
+  reEvaluated          Boolean      @default(false)
+  evaluatedAt          DateTime     @default(now())
+
+  @@unique([sessionId, parameterId])
+}
+
+model ComplianceReport {
+  id          String   @id @default(cuid())
+  sessionId   String
+  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  payload     Json
+  generatedAt DateTime @default(now())
+
+  @@index([sessionId])
+}
+
+model Document {
+  id               String         @id @default(cuid())
+  scope            DocumentScope
+  rfiId            String?
+  rfi              RFI?           @relation(fields: [rfiId], references: [id], onDelete: Cascade)
+  catalogueItemId  String?
+  catalogueItem    CatalogueItem? @relation(fields: [catalogueItemId], references: [id], onDelete: Cascade)
+  turnId           String?
+  turn             Turn?          @relation(fields: [turnId], references: [id], onDelete: Cascade)
+  filename         String
+  mimeType         String
+  sizeBytes        Int
+  storageKey       String
+  storageProvider  String
+  extractedText    String?
+  extractionStatus String         @default("pending")
+  uploadedById     String
+  uploadedBy       User           @relation(fields: [uploadedById], references: [id])
+  createdAt        DateTime       @default(now())
+
+  @@index([rfiId])
+  @@index([catalogueItemId])
+  @@index([turnId])
+}
+
+model Invitation {
+  id         String           @id @default(cuid())
+  token      String           @unique
+  tenantId   String
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  email      String
+  role       Role
+  supplierId String?
+  status     InvitationStatus @default(pending)
+  issuedById String
+  issuedBy   User             @relation("IssuedBy", fields: [issuedById], references: [id])
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime         @default(now())
+
+  @@index([tenantId, status])
+  @@index([email])
+}

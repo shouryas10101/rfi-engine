@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: rfi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rfi
+      POSTGRES_PASSWORD: rfi
+      POSTGRES_DB: rfi_engine
+    ports:
+      - "5432:5432"
+    volumes:
+      - rfi_pg_data:/var/lib/postgresql/data
+
+volumes:
+  rfi_pg_data:
