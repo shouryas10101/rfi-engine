@@ -57,7 +57,7 @@ export function DocumentList({ documents, onUpload, onDelete, readOnly, emptyTex
 
   async function downloadDoc(id: string, filename: string) {
     const resp = await api.get(`/documents/${id}/download`, { responseType: "blob" });
-    if (resp.headers["content-type"]?.includes("application/json")) {
+    if (String(resp.headers["content-type"] ?? "").includes("application/json")) {
       // R2 — backend returned a JSON with a signed URL
       const text = await (resp.data as Blob).text();
       const { url } = JSON.parse(text);
