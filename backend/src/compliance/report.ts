@@ -1,5 +1,16 @@
 import type { Verdict } from "../domain/parameter.js";
 
+export type VariantStatus = {
+  productCode: string;
+  status: "active" | "eliminated";
+  eliminatedAt: string | null;
+  eliminationReason: string | null;
+  mhPassed: number;
+  mhTotal: number;
+  gthMatched: number;
+  gthTotal: number;
+};
+
 export type ReportInput = {
   rfi: {
     id: string;
@@ -23,6 +34,7 @@ export type ReportInput = {
     modificationDistance: number;
     evaluatedBy: string;
   }[];
+  variants?: VariantStatus[];
 };
 
 export type ComplianceReportPayload = {
@@ -43,6 +55,17 @@ export type ComplianceReportPayload = {
     averageModificationDistance: number;
     deterministicCount: number;
     llmCount: number;
+  };
+  variants: {
+    recommended: {
+      productCode: string;
+      mhPassed: number;
+      mhTotal: number;
+      gthMatched: number;
+      gthTotal: number;
+      reason: string;
+    } | null;
+    all: VariantStatus[];
   };
   sections: {
     phase: string;
@@ -111,6 +134,24 @@ export function buildComplianceReport(input: ReportInput): ComplianceReportPaylo
   const totalMod = input.responses.reduce((s, r) => s + r.modificationDistance, 0);
   const avgMod = input.responses.length === 0 ? 0 : totalMod / input.responses.length;
 
+  // Pick the recommended variant: active variant with most MH passes, then most GTH matches
+  const allVariants = input.variants ?? [];
+  const activeVariants = allVariants.filter((v) => v.status === "active");
+  const sorted = [...activeVariants].sort((a, b) =>
+    b.mhPassed !== a.mhPassed ? b.mhPassed - a.mhPassed : b.gthMatched - a.gthMatched,
+  );
+  const best = sorted[0] ?? null;
+  const recommended = best
+    ? {
+        productCode: best.productCode,
+        mhPassed: best.mhPassed,
+        mhTotal: best.mhTotal,
+        gthMatched: best.gthMatched,
+        gthTotal: best.gthTotal,
+        reason: `Passed ${best.mhPassed}/${best.mhTotal} must-have checks and matched ${best.gthMatched}/${best.gthTotal} good-to-have preferences.`,
+      }
+    : null;
+
   return {
     schemaVersion: "1.0",
     generatedAt: new Date().toISOString(),
@@ -139,6 +180,7 @@ export function buildComplianceReport(input: ReportInput): ComplianceReportPaylo
       deterministicCount: input.responses.filter((r) => r.evaluatedBy === "deterministic").length,
       llmCount: input.responses.filter((r) => r.evaluatedBy === "llm").length,
     },
+    variants: { recommended, all: allVariants },
     sections,
   };
 }

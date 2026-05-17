@@ -37,6 +37,7 @@ export default function CataloguePage() {
   const [extractedVariants, setExtractedVariants] = useState<ExtractedVariant[] | null>(null);
   const [variantCategory, setVariantCategory] = useState("");
   const [savingVariants, setSavingVariants] = useState(false);
+  const [parsedFile, setParsedFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const variantFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -76,6 +77,7 @@ export default function CataloguePage() {
     setParseNote(null);
     setError(null);
     setExtractedVariants(null);
+    setParsedFile(file);
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -110,6 +112,7 @@ export default function CataloguePage() {
     } catch (err) {
       const e = err as { response?: { data?: { error?: string; reason?: string } } };
       setError(e.response?.data?.error?.replace(/_/g, " ") ?? "parse_failed");
+      setParsedFile(null);
     } finally {
       setParsing(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -128,16 +131,24 @@ export default function CataloguePage() {
     setSavingVariants(true);
     setError(null);
     try {
+      const createdIds: string[] = [];
       for (const v of selected) {
-        await api.post(`/suppliers/${user!.supplierId}/catalogue`, {
+        const r = await api.post(`/suppliers/${user!.supplierId}/catalogue`, {
           componentCategory: variantCategory.trim(),
           productCode: v.productCode,
           parameters: v.parameters,
         });
+        createdIds.push(r.data.catalogueItem.id);
+      }
+      if (parsedFile) {
+        for (const itemId of createdIds) {
+          await uploadDocFor(itemId, parsedFile);
+        }
       }
       setExtractedVariants(null);
       setVariantCategory("");
       setParseNote(null);
+      setParsedFile(null);
       await load();
     } catch (err) {
       const e2 = err as { response?: { data?: { error?: string } } };
@@ -238,7 +249,7 @@ export default function CataloguePage() {
               <h2 className="text-sm font-medium">Variants extracted from catalogue</h2>
               <p className="text-xs text-ink-400 mt-1">Select the variants to add. Set the component category to match TML's RFI exactly.</p>
             </div>
-            <button type="button" onClick={() => { setExtractedVariants(null); setParseNote(null); }} className="text-xs text-ink-400 hover:text-ink-600">Discard</button>
+            <button type="button" onClick={() => { setExtractedVariants(null); setParseNote(null); setParsedFile(null); }} className="text-xs text-ink-400 hover:text-ink-600">Discard</button>
           </div>
 
           <div>
@@ -278,7 +289,7 @@ export default function CataloguePage() {
             <button type="submit" disabled={savingVariants} className="btn-primary">
               {savingVariants ? "Saving…" : `Add ${extractedVariants.filter((v) => v.selected).length} variant(s)`}
             </button>
-            <button type="button" onClick={() => { setExtractedVariants(null); setParseNote(null); }} className="btn-secondary">Cancel</button>
+            <button type="button" onClick={() => { setExtractedVariants(null); setParseNote(null); setParsedFile(null); }} className="btn-secondary">Cancel</button>
           </div>
         </form>
       )}

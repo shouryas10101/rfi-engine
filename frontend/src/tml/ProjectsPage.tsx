@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ChangeEvent } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 
 type Project = {
@@ -11,12 +11,17 @@ type Project = {
 };
 
 export default function ProjectsPage() {
+  const nav = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "", vehicleType: "", sop: "", targetMarket: "" });
+  const [form, setForm] = useState({
+    name: "", vehicleType: "", sop: "", targetMarket: "",
+    milestoneKO: "", milestoneDR0: "", milestoneDR1: "",
+    milestoneDR2: "", milestoneDR3: "", milestoneDR4: "", milestoneDR5: "",
+  });
 
   async function load() {
     const r = await api.get("/projects");
@@ -37,13 +42,21 @@ export default function ProjectsPage() {
     setSubmitting(true);
     setError(null);
     try {
+      const ms = (v: string) => v ? new Date(v).toISOString() : undefined;
       await api.post("/projects", {
         name: form.name.trim(),
         vehicleType: form.vehicleType.trim(),
-        sop: form.sop ? new Date(form.sop).toISOString() : undefined,
+        sop: ms(form.sop),
         targetMarket: form.targetMarket.trim() || undefined,
+        milestoneKO:  ms(form.milestoneKO),
+        milestoneDR0: ms(form.milestoneDR0),
+        milestoneDR1: ms(form.milestoneDR1),
+        milestoneDR2: ms(form.milestoneDR2),
+        milestoneDR3: ms(form.milestoneDR3),
+        milestoneDR4: ms(form.milestoneDR4),
+        milestoneDR5: ms(form.milestoneDR5),
       });
-      setForm({ name: "", vehicleType: "", sop: "", targetMarket: "" });
+      setForm({ name: "", vehicleType: "", sop: "", targetMarket: "", milestoneKO: "", milestoneDR0: "", milestoneDR1: "", milestoneDR2: "", milestoneDR3: "", milestoneDR4: "", milestoneDR5: "" });
       setShowForm(false);
       await load();
     } catch (err) {
@@ -74,41 +87,31 @@ export default function ProjectsPage() {
           <div className="grid md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs text-ink-400 mb-1">Project name *</label>
-              <input
-                className="input"
-                placeholder="e.g. Harrier EV — Front Brake Module"
-                value={form.name}
-                onChange={field("name")}
-                required
-              />
+              <input className="input" placeholder="e.g. Harrier EV — Front Brake Module" value={form.name} onChange={field("name")} required />
             </div>
             <div>
               <label className="block text-xs text-ink-400 mb-1">Vehicle type *</label>
-              <input
-                className="input"
-                placeholder="e.g. SUV (electric)"
-                value={form.vehicleType}
-                onChange={field("vehicleType")}
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-ink-400 mb-1">SOP date</label>
-              <input
-                className="input"
-                type="date"
-                value={form.sop}
-                onChange={field("sop")}
-              />
+              <input className="input" placeholder="e.g. SUV (electric)" value={form.vehicleType} onChange={field("vehicleType")} required />
             </div>
             <div>
               <label className="block text-xs text-ink-400 mb-1">Target market</label>
-              <input
-                className="input"
-                placeholder="e.g. India + EU"
-                value={form.targetMarket}
-                onChange={field("targetMarket")}
-              />
+              <input className="input" placeholder="e.g. India + EU" value={form.targetMarket} onChange={field("targetMarket")} />
+            </div>
+            <div>
+              <label className="block text-xs text-ink-400 mb-1">SOP date</label>
+              <input className="input" type="date" value={form.sop} onChange={field("sop")} />
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-medium text-ink-500 mb-2">Project milestones</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {(["milestoneKO", "milestoneDR0", "milestoneDR1", "milestoneDR2", "milestoneDR3", "milestoneDR4", "milestoneDR5"] as const).map((key) => (
+                <div key={key}>
+                  <label className="block text-xs text-ink-400 mb-1">{key === "milestoneKO" ? "KO" : key.replace("milestone", "").replace("DR", "DR ")}</label>
+                  <input className="input text-sm" type="date" value={form[key]} onChange={field(key)} />
+                </div>
+              ))}
             </div>
           </div>
           {error && <p className="text-xs text-red-600">{error.replace(/_/g, " ")}</p>}
@@ -120,31 +123,26 @@ export default function ProjectsPage() {
         </form>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
-        {projects.length === 0 && !showForm && (
-          <p className="text-sm text-ink-400 col-span-2">No projects yet. Click + New project to get started.</p>
-        )}
-        {projects.map((p) => (
-          <Link
-            key={p.id}
-            to={`/projects/${p.id}`}
-            className="card hover:border-accent-400 transition"
+      {projects.length === 0 && !showForm && (
+        <p className="text-sm text-ink-400">No projects yet. Click + New project to get started.</p>
+      )}
+      {projects.length > 0 && (
+        <div className="space-y-1.5">
+          <label className="block text-xs text-ink-400">Select a project to open</label>
+          <select
+            className="input w-full max-w-lg"
+            defaultValue=""
+            onChange={(e) => { if (e.target.value) nav(`/projects/${e.target.value}`); }}
           >
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="font-medium">{p.name}</h3>
-                <p className="text-sm text-ink-400 mt-1">
-                  {p.vehicleType}{p.targetMarket ? ` · ${p.targetMarket}` : ""}
-                </p>
-              </div>
-            </div>
-            <div className="mt-4 flex items-center gap-4 text-xs text-ink-400">
-              <span>{p._count.rfis} RFI{p._count.rfis === 1 ? "" : "s"}</span>
-              <span>{p._count.bidlist} supplier{p._count.bidlist === 1 ? "" : "s"}</span>
-            </div>
-          </Link>
-        ))}
-      </div>
+            <option value="" disabled>Choose project...</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} — {p.vehicleType}{p.targetMarket ? ` · ${p.targetMarket}` : ""} ({p._count.rfis} RFIs, {p._count.bidlist} suppliers)
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
     </div>
   );
 }

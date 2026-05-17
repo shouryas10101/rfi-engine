@@ -12,18 +12,29 @@ router.get(
   asyncHandler(async (req, res) => {
     const projects = await prisma.project.findMany({
       where: { tenantId: req.auth!.tenantId },
-      include: { _count: { select: { rfis: true, bidlist: true } } },
+      include: { _count: { select: { rfis: true } } },
       orderBy: { createdAt: "desc" },
     });
     res.json({ projects });
   }),
 );
 
+const milestoneFields = {
+  milestoneKO:  z.string().datetime().nullable().optional(),
+  milestoneDR0: z.string().datetime().nullable().optional(),
+  milestoneDR1: z.string().datetime().nullable().optional(),
+  milestoneDR2: z.string().datetime().nullable().optional(),
+  milestoneDR3: z.string().datetime().nullable().optional(),
+  milestoneDR4: z.string().datetime().nullable().optional(),
+  milestoneDR5: z.string().datetime().nullable().optional(),
+};
+
 const CreateProjectSchema = z.object({
   name: z.string().min(1),
   vehicleType: z.string().min(1),
   sop: z.string().datetime().optional(),
   targetMarket: z.string().optional(),
+  ...milestoneFields,
 });
 
 router.post(
@@ -38,6 +49,13 @@ router.post(
         vehicleType: body.vehicleType,
         sop: body.sop ? new Date(body.sop) : null,
         targetMarket: body.targetMarket ?? null,
+        milestoneKO:  body.milestoneKO  ? new Date(body.milestoneKO)  : null,
+        milestoneDR0: body.milestoneDR0 ? new Date(body.milestoneDR0) : null,
+        milestoneDR1: body.milestoneDR1 ? new Date(body.milestoneDR1) : null,
+        milestoneDR2: body.milestoneDR2 ? new Date(body.milestoneDR2) : null,
+        milestoneDR3: body.milestoneDR3 ? new Date(body.milestoneDR3) : null,
+        milestoneDR4: body.milestoneDR4 ? new Date(body.milestoneDR4) : null,
+        milestoneDR5: body.milestoneDR5 ? new Date(body.milestoneDR5) : null,
       },
     });
     res.status(201).json({ project });
@@ -50,8 +68,10 @@ router.get(
     const project = await prisma.project.findFirst({
       where: { id: String(req.params.id), tenantId: req.auth!.tenantId },
       include: {
-        rfis: { orderBy: { createdAt: "desc" } },
-        bidlist: { include: { supplier: true } },
+        rfis: {
+          orderBy: { createdAt: "desc" },
+          include: { bidlist: { include: { supplier: true } } },
+        },
       },
     });
     if (!project) {
@@ -62,33 +82,43 @@ router.get(
   }),
 );
 
-const AddBidlistSchema = z.object({ supplierId: z.string().min(1) });
+const UpdateProjectSchema = z.object({
+  name: z.string().min(1).optional(),
+  vehicleType: z.string().min(1).optional(),
+  sop: z.string().datetime().nullable().optional(),
+  targetMarket: z.string().nullable().optional(),
+  ...milestoneFields,
+});
 
-router.post(
-  "/:id/bidlist",
+router.patch(
+  "/:id",
   requireRole("TML_ADMIN", "TML_ENGINEER"),
   asyncHandler(async (req, res) => {
-    const body = AddBidlistSchema.parse(req.body);
     const project = await prisma.project.findFirst({
       where: { id: String(req.params.id), tenantId: req.auth!.tenantId },
     });
     if (!project) {
-      res.status(404).json({ error: "project_not_found" });
+      res.status(404).json({ error: "not_found" });
       return;
     }
-    const supplier = await prisma.supplier.findFirst({
-      where: { id: body.supplierId, tenantId: req.auth!.tenantId },
+    const body = UpdateProjectSchema.parse(req.body);
+    const updated = await prisma.project.update({
+      where: { id: project.id },
+      data: {
+        ...(body.name !== undefined && { name: body.name }),
+        ...(body.vehicleType !== undefined && { vehicleType: body.vehicleType }),
+        ...(body.sop !== undefined && { sop: body.sop ? new Date(body.sop) : null }),
+        ...(body.targetMarket !== undefined && { targetMarket: body.targetMarket }),
+        ...(body.milestoneKO  !== undefined && { milestoneKO:  body.milestoneKO  ? new Date(body.milestoneKO)  : null }),
+        ...(body.milestoneDR0 !== undefined && { milestoneDR0: body.milestoneDR0 ? new Date(body.milestoneDR0) : null }),
+        ...(body.milestoneDR1 !== undefined && { milestoneDR1: body.milestoneDR1 ? new Date(body.milestoneDR1) : null }),
+        ...(body.milestoneDR2 !== undefined && { milestoneDR2: body.milestoneDR2 ? new Date(body.milestoneDR2) : null }),
+        ...(body.milestoneDR3 !== undefined && { milestoneDR3: body.milestoneDR3 ? new Date(body.milestoneDR3) : null }),
+        ...(body.milestoneDR4 !== undefined && { milestoneDR4: body.milestoneDR4 ? new Date(body.milestoneDR4) : null }),
+        ...(body.milestoneDR5 !== undefined && { milestoneDR5: body.milestoneDR5 ? new Date(body.milestoneDR5) : null }),
+      },
     });
-    if (!supplier) {
-      res.status(404).json({ error: "supplier_not_found" });
-      return;
-    }
-    const entry = await prisma.bidlistEntry.upsert({
-      where: { projectId_supplierId: { projectId: project.id, supplierId: supplier.id } },
-      update: {},
-      create: { projectId: project.id, supplierId: supplier.id },
-    });
-    res.status(201).json({ bidlistEntry: entry });
+    res.json({ project: updated });
   }),
 );
 

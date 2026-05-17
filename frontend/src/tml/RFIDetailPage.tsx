@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { PhaseBadge, StatusBadge } from "../components/Badges";
 import { DocumentList } from "../components/DocumentList";
+import { Breadcrumb } from "../components/Breadcrumb";
 
 type Parameter = {
   id: string;
@@ -72,9 +73,7 @@ export default function RFIDetailPage() {
   return (
     <div>
       <div className="mb-6">
-        <Link to={`/projects/${rfi.project.id}`} className="text-sm text-ink-400 hover:text-ink-600">
-          ← {rfi.project.name}
-        </Link>
+        <Breadcrumb items={[{ label: "Projects", to: "/projects" }, { label: rfi.project.name, to: `/projects/${rfi.project.id}` }, { label: rfi.title }]} />
         <div className="flex items-center justify-between mt-2">
           <div>
             <h1 className="text-xl font-medium">{rfi.title}</h1>

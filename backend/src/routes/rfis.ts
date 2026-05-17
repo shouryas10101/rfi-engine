@@ -1,6 +1,7 @@
 import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
+import * as XLSX from "xlsx";
 import { prisma } from "../db/client.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { asyncHandler } from "../middleware/asyncHandler.js";
@@ -157,6 +158,7 @@ router.get(
         project: true,
         parameters: { orderBy: [{ phase: "asc" }, { ordering: "asc" }] },
         sessions: { include: { supplier: true } },
+        bidlist: { include: { supplier: true } },
         documents: {
           select: {
             id: true,
@@ -177,6 +179,54 @@ router.get(
   }),
 );
 
+const AddBidlistSchema = z.object({ supplierId: z.string().min(1) });
+
+router.post(
+  "/:id/bidlist",
+  requireRole("TML_ADMIN", "TML_ENGINEER"),
+  asyncHandler(async (req, res) => {
+    const body = AddBidlistSchema.parse(req.body);
+    const rfi = await prisma.rFI.findFirst({
+      where: { id: String(req.params.id), project: { tenantId: req.auth!.tenantId } },
+    });
+    if (!rfi) {
+      res.status(404).json({ error: "rfi_not_found" });
+      return;
+    }
+    const supplier = await prisma.supplier.findFirst({
+      where: { id: body.supplierId, tenantId: req.auth!.tenantId },
+    });
+    if (!supplier) {
+      res.status(404).json({ error: "supplier_not_found" });
+      return;
+    }
+    const entry = await prisma.bidlistEntry.upsert({
+      where: { rfiId_supplierId: { rfiId: rfi.id, supplierId: supplier.id } },
+      update: {},
+      create: { rfiId: rfi.id, supplierId: supplier.id },
+    });
+    res.status(201).json({ bidlistEntry: entry });
+  }),
+);
+
+router.delete(
+  "/:id/bidlist/:supplierId",
+  requireRole("TML_ADMIN", "TML_ENGINEER"),
+  asyncHandler(async (req, res) => {
+    const rfi = await prisma.rFI.findFirst({
+      where: { id: String(req.params.id), project: { tenantId: req.auth!.tenantId } },
+    });
+    if (!rfi) {
+      res.status(404).json({ error: "rfi_not_found" });
+      return;
+    }
+    await prisma.bidlistEntry.deleteMany({
+      where: { rfiId: rfi.id, supplierId: String(req.params.supplierId) },
+    });
+    res.json({ ok: true });
+  }),
+);
+
 router.get(
   "/:id/comparison",
   requireRole("TML_ADMIN", "TML_ENGINEER"),
@@ -184,6 +234,7 @@ router.get(
     const rfi = await prisma.rFI.findFirst({
       where: { id: String(req.params.id), project: { tenantId: req.auth!.tenantId } },
       include: {
+        project: { select: { id: true, name: true } },
         sessions: {
           include: {
             supplier: true,
@@ -212,9 +263,117 @@ router.get(
     }));
     const ranked = rankSuppliers(evals);
     res.json({
-      rfi: { id: rfi.id, title: rfi.title, componentCategory: rfi.componentCategory },
+      rfi: { id: rfi.id, title: rfi.title, componentCategory: rfi.componentCategory, project: rfi.project },
       ranked,
     });
+  }),
+);
+
+// ── Excel export helpers ─────────────────────────────────────────────────────
+
+function fmtRequirement(spec: Record<string, unknown>): string {
+  switch (spec.type) {
+    case "boolean": return "Compliant: Yes";
+    case "numeric_range": {
+      const mn = spec.min as number | null;
+      const mx = spec.max as number | null;
+      const u = (spec.unit as string) ?? "";
+      if (mn != null && mx != null) return `${mn} – ${mx} ${u}`.trim();
+      if (mn != null) return `≥ ${mn} ${u}`.trim();
+      return `≤ ${mx ?? "∞"} ${u}`.trim();
+    }
+    case "numeric_exact": return `= ${spec.value} ± ${spec.tolerance ?? 0} ${spec.unit ?? ""}`.trim();
+    case "numeric_subset_range": return `${spec.min} – ${spec.max} ${spec.unit ?? ""} (full range)`.trim();
+    case "enum": return `One of: ${(spec.allowed as string[]).join(", ")}`;
+    case "subjective": return (spec.description as string) ?? "";
+    case "text": return (spec.prompt as string) ?? "";
+    default: return "";
+  }
+}
+
+function fmtUnit(spec: Record<string, unknown>): string {
+  return (spec.unit as string) ?? "";
+}
+
+function fmtGap(verdict: string, rationale: string): string {
+  if (verdict === "pass") return "Pass";
+  if (verdict === "fail") return `Fail — ${rationale}`;
+  if (verdict === "partial") return `Partial — ${rationale}`;
+  return verdict;
+}
+
+router.get(
+  "/:id/comparison/export",
+  requireRole("TML_ADMIN", "TML_ENGINEER"),
+  asyncHandler(async (req, res) => {
+    const rfi = await prisma.rFI.findFirst({
+      where: { id: String(req.params.id), project: { tenantId: req.auth!.tenantId } },
+      include: {
+        parameters: { orderBy: [{ phase: "asc" }, { ordering: "asc" }] },
+        sessions: {
+          include: {
+            supplier: true,
+            responses: { include: { parameter: true } },
+          },
+        },
+      },
+    });
+    if (!rfi) { res.status(404).json({ error: "not_found" }); return; }
+
+    const sessions = rfi.sessions;
+    const params = rfi.parameters;
+
+    // ── Row 1: supplier name group headers ───────────────────────────────────
+    const row1: (string | null)[] = ["", "", "", ""];
+    for (const s of sessions) row1.push(s.supplier.name, null);
+
+    // ── Row 2: column headers ────────────────────────────────────────────────
+    const row2: string[] = ["Sr No", "Parameters", "TML Requirement", "Unit"];
+    for (const _s of sessions) row2.push("Supplier Offering", "Gap");
+
+    // ── Data rows ────────────────────────────────────────────────────────────
+    const dataRows = params.map((p, idx) => {
+      const spec = p.spec as Record<string, unknown>;
+      const row: (string | number | null)[] = [
+        idx + 1,
+        p.label,
+        fmtRequirement(spec),
+        fmtUnit(spec),
+      ];
+      for (const s of sessions) {
+        const r = s.responses.find((r) => r.parameterId === p.id);
+        row.push(r?.rawResponse ?? "—");
+        row.push(r ? fmtGap(r.verdict, r.rationale) : "—");
+      }
+      return row;
+    });
+
+    const wsData = [row1, row2, ...dataRows];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    // Merge supplier name headers across Offering + Gap cols
+    ws["!merges"] = sessions.map((_, i) => ({
+      s: { r: 0, c: 4 + i * 2 },
+      e: { r: 0, c: 5 + i * 2 },
+    }));
+
+    // Column widths
+    ws["!cols"] = [
+      { wch: 6 },
+      { wch: 32 },
+      { wch: 28 },
+      { wch: 10 },
+      ...sessions.flatMap(() => [{ wch: 45 }, { wch: 22 }]),
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Comparison");
+
+    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+    const slug = rfi.title.replace(/[^a-z0-9]/gi, "_").slice(0, 40);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${slug}_comparison.xlsx"`);
+    res.send(buf);
   }),
 );
 

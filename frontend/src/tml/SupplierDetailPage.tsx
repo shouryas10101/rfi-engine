@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
+import { Breadcrumb } from "../components/Breadcrumb";
 import { api } from "../api/client";
 import { DocumentList } from "../components/DocumentList";
 
@@ -15,6 +16,7 @@ type Supplier = {
   id: string;
   name: string;
   contactEmail: string;
+  logoUrl: string | null;
   users: { id: string; email: string; fullName: string | null }[];
   catalogue: CatalogueItem[];
 };
@@ -26,6 +28,8 @@ export default function SupplierDetailPage() {
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [latestLink, setLatestLink] = useState<string | null>(null);
+  const [editingLogo, setEditingLogo] = useState(false);
+  const [logoInput, setLogoInput] = useState("");
 
   async function deleteSupplier() {
     if (!window.confirm(`Delete supplier "${supplier?.name}"? This cannot be undone.`)) return;
@@ -42,6 +46,13 @@ export default function SupplierDetailPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  async function saveLogo(e: FormEvent) {
+    e.preventDefault();
+    await api.patch(`/suppliers/${id}`, { logoUrl: logoInput.trim() || null });
+    setEditingLogo(false);
+    await load();
+  }
 
   async function inviteEngineer(e: FormEvent) {
     e.preventDefault();
@@ -60,16 +71,42 @@ export default function SupplierDetailPage() {
   return (
     <div>
       <div className="mb-6">
-        <Link to="/suppliers" className="text-sm text-ink-400 hover:text-ink-600">← Suppliers</Link>
+        <Breadcrumb items={[{ label: "Suppliers", to: "/suppliers" }, { label: supplier.name }]} />
         <div className="flex items-start justify-between mt-2">
-          <div>
-            <h1 className="text-xl font-medium">{supplier.name}</h1>
-            <p className="text-sm text-ink-400">{supplier.contactEmail}</p>
+          <div className="flex items-center gap-3">
+            {supplier.logoUrl ? (
+              <img src={supplier.logoUrl} alt={supplier.name} className="w-10 h-10 rounded-lg object-cover border border-ink-200 bg-white" />
+            ) : (
+              <div className="w-10 h-10 rounded-lg bg-violet-700 flex items-center justify-center text-white text-sm font-semibold flex-shrink-0">
+                {supplier.name.slice(0, 2).toUpperCase()}
+              </div>
+            )}
+            <div>
+              <h1 className="text-xl font-medium">{supplier.name}</h1>
+              <p className="text-sm text-ink-400">{supplier.contactEmail}</p>
+            </div>
           </div>
-          <button onClick={deleteSupplier} className="text-xs text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 rounded-md px-3 py-1.5 transition-colors">
-            Delete supplier
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => { setEditingLogo(!editingLogo); setLogoInput(supplier.logoUrl ?? ""); }} className="text-xs text-ink-400 hover:text-ink-600 border border-ink-200 hover:border-ink-400 rounded-md px-3 py-1.5 transition-colors">
+              {editingLogo ? "Cancel" : "Edit logo"}
+            </button>
+            <button onClick={deleteSupplier} className="text-xs text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 rounded-md px-3 py-1.5 transition-colors">
+              Delete supplier
+            </button>
+          </div>
         </div>
+        {editingLogo && (
+          <form onSubmit={saveLogo} className="mt-3 flex items-center gap-2 max-w-lg">
+            <input
+              className="input text-sm flex-1"
+              placeholder="Logo URL (leave empty to clear)"
+              value={logoInput}
+              onChange={(e) => setLogoInput(e.target.value)}
+              autoFocus
+            />
+            <button type="submit" className="btn-primary text-xs">Save</button>
+          </form>
+        )}
       </div>
 
       {latestLink && (

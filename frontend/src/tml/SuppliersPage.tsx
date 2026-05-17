@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 
 type Supplier = {
@@ -20,6 +20,7 @@ type Invitation = {
 };
 
 export default function SuppliersPage() {
+  const nav = useNavigate();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [showAdd, setShowAdd] = useState(false);
@@ -128,21 +129,23 @@ export default function SuppliersPage() {
 
       <h2 className="text-xs font-medium uppercase tracking-wide text-ink-400 mb-2">Active suppliers</h2>
       {suppliers.length === 0 && <p className="text-sm text-ink-400 mb-4">No suppliers yet.</p>}
-      <div className="card divide-y divide-ink-100 mb-6">
-        {suppliers.map((s) => (
-          <Link key={s.id} to={`/suppliers/${s.id}`} className="block py-3 first:pt-0 last:pb-0 hover:bg-ink-50 -mx-5 px-5 transition">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium text-sm">{s.name}</p>
-                <p className="text-xs text-ink-400 mt-1">
-                  {s.contactEmail} · {s._count.users} engineer{s._count.users === 1 ? "" : "s"} · {s._count.catalogue} catalogue item{s._count.catalogue === 1 ? "" : "s"}
-                </p>
-              </div>
-              <span className="text-xs text-accent-600">Manage →</span>
-            </div>
-          </Link>
-        ))}
-      </div>
+      {suppliers.length > 0 && (
+        <div className="space-y-1.5 mb-6">
+          <label className="block text-xs text-ink-400">Select a supplier to manage</label>
+          <select
+            className="input w-full max-w-lg"
+            defaultValue=""
+            onChange={(e) => { if (e.target.value) nav(`/suppliers/${e.target.value}`); }}
+          >
+            <option value="" disabled>Choose supplier...</option>
+            {suppliers.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} — {s.contactEmail} · {s._count.users} engineer{s._count.users === 1 ? "" : "s"}, {s._count.catalogue} catalogue item{s._count.catalogue === 1 ? "" : "s"}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {pendingInvites.length > 0 && (
         <>

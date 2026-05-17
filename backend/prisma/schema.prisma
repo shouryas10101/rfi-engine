@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum Role {
@@ -102,9 +103,15 @@ model Project {
   vehicleType  String
   sop          DateTime?
   targetMarket String?
+  milestoneKO  DateTime?
+  milestoneDR0 DateTime?
+  milestoneDR1 DateTime?
+  milestoneDR2 DateTime?
+  milestoneDR3 DateTime?
+  milestoneDR4 DateTime?
+  milestoneDR5 DateTime?
   createdAt    DateTime       @default(now())
   rfis         RFI[]
-  bidlist      BidlistEntry[]
 
   @@index([tenantId])
 }
@@ -120,6 +127,7 @@ model RFI {
   parameters        RFIParameter[]
   sessions          Session[]
   documents         Document[]
+  bidlist           BidlistEntry[]
 
   @@index([projectId])
   @@index([componentCategory])
@@ -149,6 +157,7 @@ model Supplier {
   tenant       Tenant          @relation(fields: [tenantId], references: [id])
   name         String
   contactEmail String
+  logoUrl      String?
   createdAt    DateTime        @default(now())
   catalogue    CatalogueItem[]
   bidlist      BidlistEntry[]
@@ -160,13 +169,13 @@ model Supplier {
 
 model BidlistEntry {
   id         String   @id @default(cuid())
-  projectId  String
-  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  rfiId      String
+  rfi        RFI      @relation(fields: [rfiId], references: [id], onDelete: Cascade)
   supplierId String
   supplier   Supplier @relation(fields: [supplierId], references: [id])
   createdAt  DateTime @default(now())
 
-  @@unique([projectId, supplierId])
+  @@unique([rfiId, supplierId])
 }
 
 model CatalogueItem {

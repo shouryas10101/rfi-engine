@@ -32,8 +32,11 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center px-4">
       <div className="w-full max-w-md">
-        <h1 className="text-2xl font-medium mb-1 text-center">Samanvaya Portal</h1>
-        <p className="text-sm text-ink-400 mb-6 text-center">Sign in to continue</p>
+        <div className="flex flex-col items-center mb-6">
+          <img src="/tata-logo.svg" alt="Tata" className="h-40 mb-4" />
+          <h1 className="text-2xl font-medium mb-1 text-center">Setu Portal</h1>
+          <p className="text-sm text-ink-400 text-center">Sign in to continue</p>
+        </div>
         <form onSubmit={onSubmit} className="card space-y-4">
           <div>
             <label className="label">Email</label>

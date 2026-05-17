@@ -51,6 +51,7 @@ type SessionDetail = {
   supplier: {
     id: string;
     name: string;
+    logoUrl: string | null;
     catalogue: { id: string; productCode: string; documents: { id: string; filename: string; mimeType: string; sizeBytes: number; extractionStatus: string }[] }[];
   };
   turns: Turn[];
@@ -418,9 +419,7 @@ export default function ChatPage() {
 
           {/* Chat header */}
           <div className="flex-shrink-0 px-5 py-3 border-b border-ink-100 bg-white flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-blue-900 flex items-center justify-center flex-shrink-0">
-              <span className="text-white text-[10px] font-semibold">VK</span>
-            </div>
+            <LogoAvatar src="/tata-logo.svg" fallback="TML" size="sm" />
             <div className="flex items-center gap-2">
               <svg className="w-4 h-4 text-ink-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 3M21 7.5H7.5" />
@@ -428,15 +427,11 @@ export default function ChatPage() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-ink-900 truncate">
-                Vishwakarma ↔ Anveshak · {session.supplier.name}
+                {isSupplier ? "TML - Vishwakarma" : `${session.supplier.name} - Anveshak`}
               </p>
               <p className="text-xs text-ink-400">{session.rfi.title}</p>
             </div>
-            <div className="w-8 h-8 rounded-full bg-violet-700 flex items-center justify-center flex-shrink-0">
-              <span className="text-white text-[10px] font-semibold">
-                {session.supplier.name.slice(0, 2).toUpperCase()}
-              </span>
-            </div>
+            <LogoAvatar src={session.supplier.logoUrl} fallback={session.supplier.name.slice(0, 2).toUpperCase()} size="sm" bgClass="bg-violet-700" />
           </div>
 
           {/* Phase ribbon */}
@@ -569,6 +564,7 @@ export default function ChatPage() {
                   isSupplierViewer={isSupplier}
                   variantNames={variantNames}
                   supplierName={session.supplier.name}
+                  supplierLogoUrl={session.supplier.logoUrl}
                 />
               ))}
               {session.status === "active" && answeredParams < totalParams && (() => {
@@ -579,6 +575,7 @@ export default function ChatPage() {
                 return (
                   <TypingBubble
                     side={typingSide}
+                    supplierLogoUrl={session.supplier.logoUrl}
                     supplierInitials={session.supplier.name.slice(0, 2).toUpperCase()}
                   />
                 );
@@ -809,13 +806,48 @@ export default function ChatPage() {
   );
 }
 
-function TypingBubble({ side, supplierInitials }: { side: "tml" | "supplier"; supplierInitials: string }) {
+function LogoAvatar({
+  src,
+  fallback,
+  size = "md",
+  bgClass = "bg-blue-900",
+  dim = false,
+}: {
+  src: string | null | undefined;
+  fallback: string;
+  size?: "sm" | "md";
+  bgClass?: string;
+  dim?: boolean;
+}) {
+  const [imgError, setImgError] = useState(false);
+  const dim_ = dim ? "opacity-40" : "";
+  const sizeClass = size === "sm" ? "w-8 h-8" : "w-7 h-7";
+  if (src && !imgError) {
+    return (
+      <img
+        src={src}
+        alt={fallback}
+        onError={() => setImgError(true)}
+        className={`${sizeClass} rounded-full object-cover flex-shrink-0 border border-ink-200 bg-white ${dim_}`}
+      />
+    );
+  }
+  return (
+    <div className={`${sizeClass} rounded-full flex items-center justify-center text-[10px] font-semibold text-white flex-shrink-0 ${bgClass} ${dim_}`}>
+      {fallback.slice(0, 2)}
+    </div>
+  );
+}
+
+function TypingBubble({ side, supplierLogoUrl, supplierInitials }: { side: "tml" | "supplier"; supplierLogoUrl: string | null | undefined; supplierInitials: string }) {
   const isTml = side === "tml";
   return (
     <div className={`flex items-end gap-2 ${isTml ? "" : "flex-row-reverse"}`}>
-      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold text-white flex-shrink-0 ${isTml ? "bg-blue-900" : "bg-violet-700"}`}>
-        {isTml ? "TA" : supplierInitials}
-      </div>
+      <LogoAvatar
+        src={isTml ? "/tata-logo.svg" : supplierLogoUrl}
+        fallback={isTml ? "TML" : supplierInitials}
+        bgClass={isTml ? "bg-blue-900" : "bg-violet-700"}
+      />
       <div className={`border rounded-xl px-4 py-3 shadow-sm flex items-center gap-1.5 ${isTml ? "bg-blue-50 border-blue-100" : "bg-white border-ink-200"}`}>
         <span className={`w-1.5 h-1.5 rounded-full animate-bounce ${isTml ? "bg-blue-400" : "bg-violet-400"}`} style={{ animationDelay: "0ms" }} />
         <span className={`w-1.5 h-1.5 rounded-full animate-bounce ${isTml ? "bg-blue-400" : "bg-violet-400"}`} style={{ animationDelay: "150ms" }} />
@@ -830,12 +862,14 @@ function TurnView({
   response,
   variantNames,
   supplierName,
+  supplierLogoUrl,
 }: {
   turn: Turn;
   response: Response | undefined;
   isSupplierViewer: boolean;
   variantNames: string[];
   supplierName: string;
+  supplierLogoUrl: string | null | undefined;
 }) {
   if (turn.authorRole === "system") {
     return (
@@ -862,14 +896,19 @@ function TurnView({
     ? "bg-blue-50 text-blue-900 border-blue-100"
     : "bg-white text-ink-800 border-ink-200";
 
-  const avatarBg = isTmlSide ? "bg-blue-900" : "bg-violet-700";
-  const avatarLabel = isAgent
+  const avatarFallback = isAgent
     ? isTmlSide
-      ? "VK"
+      ? "TML"
       : mentionedVariant
       ? mentionedVariant.slice(0, 2).toUpperCase()
-      : "AN"
+      : supplierName.slice(0, 2).toUpperCase()
     : (turn.user?.fullName ?? turn.user?.email ?? "?").slice(0, 2).toUpperCase();
+  const avatarSrc = isAgent
+    ? isTmlSide
+      ? "/tata-logo.svg"
+      : supplierLogoUrl
+    : null;
+  const avatarBgClass = isTmlSide ? "bg-blue-900" : "bg-violet-700";
 
   let nameLabel = "";
   if (turn.authorRole === "tml_agent") nameLabel = "Vishwakarma";
@@ -887,13 +926,12 @@ function TurnView({
     <div className={`flex flex-col ${align}`}>
       <div className={`flex gap-2 max-w-[86%] ${isTmlSide ? "" : "flex-row-reverse"}`}>
         {/* Avatar */}
-        <div
-          className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold flex-shrink-0 ${
-            mentionedVariantIdx >= 0 ? `bg-ink-100 ${vc(mentionedVariantIdx).text}` : `${avatarBg} text-white`
-          } ${superseded ? "opacity-40" : ""}`}
-        >
-          {avatarLabel}
-        </div>
+        <LogoAvatar
+          src={avatarSrc}
+          fallback={mentionedVariantIdx >= 0 ? avatarFallback : avatarFallback}
+          bgClass={mentionedVariantIdx >= 0 ? `bg-ink-100 ${vc(mentionedVariantIdx).text}` : avatarBgClass}
+          dim={superseded}
+        />
 
         <div className="flex-1 min-w-0">
           {/* Name + time + param tag */}

@@ -10,6 +10,29 @@ import { callLlm, llmAvailable } from "../llm/client.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: env.MAX_UPLOAD_BYTES } });
 
+async function fetchLogoUrl(name: string): Promise<string | null> {
+  try {
+    // Resolve the real domain via Clearbit autocomplete
+    const acRes = await fetch(
+      `https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(name)}`,
+      { signal: AbortSignal.timeout(4000) },
+    );
+    let domain: string | null = null;
+    if (acRes.ok) {
+      const data = await acRes.json() as { domain?: string }[];
+      domain = data[0]?.domain ?? null;
+    }
+    // Fall back to slug-guessing if autocomplete failed
+    if (!domain) {
+      domain = `${name.toLowerCase().replace(/[^a-z0-9]/g, "")}.com`;
+    }
+    // Google favicon service — always returns a PNG, never 404s
+    return `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
+  } catch {
+    return null;
+  }
+}
+
 const router = Router();
 router.use(requireAuth);
 
@@ -37,14 +60,43 @@ router.post(
   requireRole("TML_ADMIN", "TML_ENGINEER"),
   asyncHandler(async (req, res) => {
     const body = CreateSupplierSchema.parse(req.body);
+    const logoUrl = await fetchLogoUrl(body.name);
     const supplier = await prisma.supplier.create({
       data: {
         tenantId: req.auth!.tenantId,
         name: body.name,
         contactEmail: body.contactEmail,
+        logoUrl,
       },
     });
     res.status(201).json({ supplier });
+  }),
+);
+
+const UpdateSupplierSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  contactEmail: z.string().email().optional(),
+  logoUrl: z.string().url().nullable().optional(),
+});
+
+router.patch(
+  "/:id",
+  requireRole("TML_ADMIN", "TML_ENGINEER"),
+  asyncHandler(async (req, res) => {
+    const supplier = await prisma.supplier.findFirst({
+      where: { id: String(req.params.id), tenantId: req.auth!.tenantId },
+    });
+    if (!supplier) { res.status(404).json({ error: "not_found" }); return; }
+    const body = UpdateSupplierSchema.parse(req.body);
+    const updated = await prisma.supplier.update({
+      where: { id: supplier.id },
+      data: {
+        ...(body.name !== undefined && { name: body.name }),
+        ...(body.contactEmail !== undefined && { contactEmail: body.contactEmail }),
+        ...(body.logoUrl !== undefined && { logoUrl: body.logoUrl }),
+      },
+    });
+    res.json({ supplier: updated });
   }),
 );
 
@@ -83,6 +135,14 @@ router.get(
     if (!supplier) {
       res.status(404).json({ error: "not_found" });
       return;
+    }
+    if (!supplier.logoUrl) {
+      const logoUrl = await fetchLogoUrl(supplier.name);
+      if (logoUrl) {
+        await prisma.supplier.update({ where: { id: supplier.id }, data: { logoUrl } });
+        res.json({ supplier: { ...supplier, logoUrl } });
+        return;
+      }
     }
     res.json({ supplier });
   }),

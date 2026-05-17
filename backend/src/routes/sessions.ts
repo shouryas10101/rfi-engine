@@ -10,6 +10,7 @@ import {
   runUntilBlocked,
   submitHumanTurn,
   getSessionDetail,
+  generateAndStoreReport,
 } from "../services/sessionService.js";
 
 const router = Router();
@@ -63,7 +64,7 @@ router.post(
       return;
     }
     const onBidlist = await prisma.bidlistEntry.findUnique({
-      where: { projectId_supplierId: { projectId: rfi.projectId, supplierId: supplier.id } },
+      where: { rfiId_supplierId: { rfiId: rfi.id, supplierId: supplier.id } },
     });
     if (!onBidlist) {
       res.status(400).json({ error: "supplier_not_on_bidlist" });
@@ -256,6 +257,31 @@ router.get(
       res.status(404).json({ error: "report_not_yet_generated" });
       return;
     }
+    res.json({ report });
+  }),
+);
+
+router.post(
+  "/:id/report/regenerate",
+  asyncHandler(async (req, res) => {
+    const id = String(req.params.id);
+    const auth = req.auth!;
+    if (auth.role === "SUPPLIER_ENGINEER") {
+      res.status(403).json({ error: "forbidden" });
+      return;
+    }
+    const session = await prisma.session.findFirst({
+      where: { id, supplier: { tenantId: auth.tenantId } },
+    });
+    if (!session) {
+      res.status(404).json({ error: "session_not_found" });
+      return;
+    }
+    await generateAndStoreReport(id);
+    const report = await prisma.complianceReport.findFirst({
+      where: { sessionId: id },
+      orderBy: { generatedAt: "desc" },
+    });
     res.json({ report });
   }),
 );

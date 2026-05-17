@@ -1,8 +1,20 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { api } from "../api/client";
+import { Breadcrumb } from "../components/Breadcrumb";
 
 type Verdict = "pass" | "fail" | "partial" | "not_applicable";
+
+type VariantStatus = {
+  productCode: string;
+  status: "active" | "eliminated";
+  eliminatedAt: string | null;
+  eliminationReason: string | null;
+  mhPassed: number;
+  mhTotal: number;
+  gthMatched: number;
+  gthTotal: number;
+};
 
 type ReportPayload = {
   schemaVersion: string;
@@ -22,6 +34,17 @@ type ReportPayload = {
     averageModificationDistance: number;
     deterministicCount: number;
     llmCount: number;
+  };
+  variants?: {
+    recommended: {
+      productCode: string;
+      mhPassed: number;
+      mhTotal: number;
+      gthMatched: number;
+      gthTotal: number;
+      reason: string;
+    } | null;
+    all: VariantStatus[];
   };
   sections: {
     phase: string;
@@ -106,14 +129,11 @@ export default function ReportPage() {
 
   return (
     <div className="max-w-5xl mx-auto">
-      {/* Breadcrumb */}
-      <div className="mb-5 flex items-center gap-1.5 text-sm">
-        <Link to="/sessions" className="text-ink-400 hover:text-ink-600 transition-colors">Sessions</Link>
-        <span className="text-ink-300">›</span>
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md bg-ink-100 text-ink-600 text-xs font-medium">
-          Report
-        </span>
-      </div>
+      <Breadcrumb items={[
+        { label: "Sessions", to: "/sessions" },
+        { label: `${payload.meta.rfi.title} — ${payload.meta.supplier.name}`, to: `/sessions/${payload.meta.session.id}` },
+        { label: "Report" },
+      ]} />
 
       {/* Header */}
       <div className="flex items-start justify-between mb-6">
@@ -164,6 +184,59 @@ export default function ReportPage() {
           </p>
         </div>
       </div>
+
+      {/* Variant recommendation */}
+      {payload.variants && payload.variants.all.length > 0 && (
+        <div className="mb-8">
+          <p className="text-[10px] font-mono uppercase tracking-widest text-ink-400 mb-3">Catalogue variants</p>
+
+          {payload.variants.recommended && (
+            <div className="rounded-xl border border-green-200 bg-green-50 p-4 mb-4 flex items-start gap-4">
+              <div className="w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center font-bold text-sm flex-shrink-0 mt-0.5">✓</div>
+              <div>
+                <p className="text-xs font-mono uppercase tracking-widest text-green-600 mb-0.5">Recommended variant</p>
+                <p className="text-lg font-bold text-ink-900">{payload.variants.recommended.productCode}</p>
+                <p className="text-sm text-ink-600 mt-0.5">{payload.variants.recommended.reason}</p>
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-xl border border-ink-200 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-ink-50 border-b border-ink-200">
+                  <th className="text-left px-4 py-2.5 text-[10px] font-mono uppercase tracking-wide text-ink-400">Product code</th>
+                  <th className="text-left px-4 py-2.5 text-[10px] font-mono uppercase tracking-wide text-ink-400">Status</th>
+                  <th className="text-left px-4 py-2.5 text-[10px] font-mono uppercase tracking-wide text-ink-400">Must-have</th>
+                  <th className="text-left px-4 py-2.5 text-[10px] font-mono uppercase tracking-wide text-ink-400">Good-to-have</th>
+                  <th className="text-left px-4 py-2.5 text-[10px] font-mono uppercase tracking-wide text-ink-400">Eliminated at</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-ink-100">
+                {payload.variants.all.map((v) => {
+                  const isRec = payload.variants?.recommended?.productCode === v.productCode;
+                  return (
+                    <tr key={v.productCode} className={v.status === "eliminated" ? "bg-red-50/30" : isRec ? "bg-green-50/40" : "bg-white"}>
+                      <td className="px-4 py-3 font-mono text-sm font-medium text-ink-900">
+                        {v.productCode}
+                        {isRec && <span className="ml-2 text-[10px] font-sans font-semibold text-green-600 uppercase tracking-wide">Recommended</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        {v.status === "active"
+                          ? <span className="text-xs font-medium text-green-700">Active</span>
+                          : <span className="text-xs font-medium text-red-600">Eliminated</span>}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-ink-700">{v.mhPassed}/{v.mhTotal}</td>
+                      <td className="px-4 py-3 text-sm text-ink-700">{v.gthMatched}/{v.gthTotal}</td>
+                      <td className="px-4 py-3 text-xs text-ink-500">{v.eliminatedAt ?? "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Sections */}
       <div className="space-y-8">

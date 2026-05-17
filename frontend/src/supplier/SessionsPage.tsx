@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { PhaseBadge, StatusBadge } from "../components/Badges";
 
 type SessionRow = {
   id: string;
@@ -15,6 +14,7 @@ type SessionRow = {
 };
 
 export default function SessionsPage() {
+  const nav = useNavigate();
   const { user } = useAuth();
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -81,29 +81,26 @@ export default function SessionsPage() {
       </div>
 
       {filtered.length === 0 && (
-        <div className="card text-sm text-ink-400">No sessions match.</div>
+        <p className="text-sm text-ink-400">No sessions match.</p>
       )}
 
-      <div className="space-y-2">
-        {filtered.map((s) => (
-          <Link
-            key={s.id}
-            to={`/sessions/${s.id}`}
-            className="card flex items-center justify-between hover:border-accent-400 transition"
+      {filtered.length > 0 && (
+        <div className="space-y-1.5">
+          <label className="block text-xs text-ink-400">Select a session to open</label>
+          <select
+            className="input w-full max-w-lg"
+            defaultValue=""
+            onChange={(e) => { if (e.target.value) nav(`/sessions/${e.target.value}`); }}
           >
-            <div className="min-w-0 flex-1">
-              <h3 className="font-medium text-sm truncate">{s.rfi.title}</h3>
-              <p className="text-xs text-ink-400 mt-1">
-                {s.rfi.project.name} · {s.supplier.name} · {s._count.responses} answered, {s._count.turns} messages
-              </p>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <PhaseBadge phase={s.currentPhase} />
-              <StatusBadge status={s.status} />
-            </div>
-          </Link>
-        ))}
-      </div>
+            <option value="" disabled>Choose session...</option>
+            {filtered.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.rfi.title} — {s.rfi.project.name}{!isSupplier ? ` · ${s.supplier.name}` : ""} [{s.status}]
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
     </div>
   );
 }

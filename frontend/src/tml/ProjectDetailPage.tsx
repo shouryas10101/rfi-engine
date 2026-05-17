@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ChangeEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
+import { Breadcrumb } from "../components/Breadcrumb";
 
 type Supplier = { id: string; name: string; contactEmail: string };
 
@@ -9,8 +10,15 @@ type Project = {
   name: string;
   vehicleType: string;
   targetMarket: string | null;
-  rfis: { id: string; title: string; componentCategory: string; status: string }[];
-  bidlist: { supplier: Supplier }[];
+  sop: string | null;
+  milestoneKO:  string | null;
+  milestoneDR0: string | null;
+  milestoneDR1: string | null;
+  milestoneDR2: string | null;
+  milestoneDR3: string | null;
+  milestoneDR4: string | null;
+  milestoneDR5: string | null;
+  rfis: { id: string; title: string; componentCategory: string; status: string; bidlist: { supplier: Supplier }[] }[];
 };
 
 // Supported parameter spec types matching backend ParameterSpecSchema
@@ -254,9 +262,19 @@ export default function ProjectDetailPage() {
   const nav = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
   const [allSuppliers, setAllSuppliers] = useState<Supplier[]>([]);
-  const [adding, setAdding] = useState(false);
-  const [pickedSupplierId, setPickedSupplierId] = useState("");
+  const [addingToRfi, setAddingToRfi] = useState<string | null>(null);
+  const [addSupplierPick, setAddSupplierPick] = useState("");
   const [creatingSessionFor, setCreatingSessionFor] = useState<string | null>(null);
+
+  // Edit project state
+  const [showEditForm, setShowEditForm] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: "", vehicleType: "", sop: "", targetMarket: "",
+    milestoneKO: "", milestoneDR0: "", milestoneDR1: "",
+    milestoneDR2: "", milestoneDR3: "", milestoneDR4: "", milestoneDR5: "",
+  });
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   // RFI creation state
   const [showRfiForm, setShowRfiForm] = useState(false);
@@ -267,6 +285,7 @@ export default function ProjectDetailPage() {
   const [rfiError, setRfiError] = useState<string | null>(null);
   const [rfiParsing, setRfiParsing] = useState(false);
   const [rfiParseNote, setRfiParseNote] = useState<string | null>(null);
+  const [rfiParsedFile, setRfiParsedFile] = useState<File | null>(null);
   const rfiFileInputRef = useRef<HTMLInputElement>(null);
 
   async function load() {
@@ -280,11 +299,66 @@ export default function ProjectDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  async function addToBidlist() {
-    if (!pickedSupplierId) return;
-    await api.post(`/projects/${id}/bidlist`, { supplierId: pickedSupplierId });
-    setPickedSupplierId("");
-    setAdding(false);
+  const toDateInput = (iso: string | null) => iso ? iso.slice(0, 10) : "";
+
+  function openEditForm() {
+    if (!project) return;
+    setEditForm({
+      name: project.name,
+      vehicleType: project.vehicleType,
+      sop: toDateInput(project.sop),
+      targetMarket: project.targetMarket ?? "",
+      milestoneKO:  toDateInput(project.milestoneKO),
+      milestoneDR0: toDateInput(project.milestoneDR0),
+      milestoneDR1: toDateInput(project.milestoneDR1),
+      milestoneDR2: toDateInput(project.milestoneDR2),
+      milestoneDR3: toDateInput(project.milestoneDR3),
+      milestoneDR4: toDateInput(project.milestoneDR4),
+      milestoneDR5: toDateInput(project.milestoneDR5),
+    });
+    setEditError(null);
+    setShowEditForm(true);
+  }
+
+  async function saveEdit(e: FormEvent) {
+    e.preventDefault();
+    setEditSubmitting(true);
+    setEditError(null);
+    try {
+      const ms = (v: string) => v ? new Date(v).toISOString() : null;
+      await api.patch(`/projects/${id}`, {
+        name: editForm.name.trim(),
+        vehicleType: editForm.vehicleType.trim(),
+        sop: ms(editForm.sop),
+        targetMarket: editForm.targetMarket.trim() || null,
+        milestoneKO:  ms(editForm.milestoneKO),
+        milestoneDR0: ms(editForm.milestoneDR0),
+        milestoneDR1: ms(editForm.milestoneDR1),
+        milestoneDR2: ms(editForm.milestoneDR2),
+        milestoneDR3: ms(editForm.milestoneDR3),
+        milestoneDR4: ms(editForm.milestoneDR4),
+        milestoneDR5: ms(editForm.milestoneDR5),
+      });
+      setShowEditForm(false);
+      await load();
+    } catch (err) {
+      const e2 = err as { response?: { data?: { error?: string } } };
+      setEditError(e2.response?.data?.error ?? "update_failed");
+    } finally {
+      setEditSubmitting(false);
+    }
+  }
+
+  async function addSupplierToRfi(rfiId: string) {
+    if (!addSupplierPick) return;
+    await api.post(`/rfis/${rfiId}/bidlist`, { supplierId: addSupplierPick });
+    setAddSupplierPick("");
+    setAddingToRfi(null);
+    await load();
+  }
+
+  async function removeFromRfiBidlist(rfiId: string, supplierId: string) {
+    await api.delete(`/rfis/${rfiId}/bidlist/${supplierId}`);
     await load();
   }
 
@@ -314,6 +388,7 @@ export default function ProjectDetailPage() {
     setRfiParsing(true);
     setRfiParseNote(null);
     setRfiError(null);
+    setRfiParsedFile(file);
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -367,6 +442,7 @@ export default function ProjectDetailPage() {
     } catch (err) {
       const e = err as { response?: { data?: { error?: string } } };
       setRfiError(e.response?.data?.error?.replace(/_/g, " ") ?? "File parsing failed");
+      setRfiParsedFile(null);
     } finally {
       setRfiParsing(false);
       if (rfiFileInputRef.current) rfiFileInputRef.current.value = "";
@@ -405,7 +481,15 @@ export default function ProjectDetailPage() {
           spec: buildSpec(p),
         })),
       };
-      await api.post("/rfis", payload);
+      const r = await api.post("/rfis", payload);
+      const newRfiId = r.data.rfi.id;
+      if (rfiParsedFile) {
+        const fd = new FormData();
+        fd.append("file", rfiParsedFile);
+        fd.append("rfiId", newRfiId);
+        await api.post("/documents/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
+        setRfiParsedFile(null);
+      }
       setShowRfiForm(false);
       setRfiTitle("");
       setRfiCategory("");
@@ -421,32 +505,109 @@ export default function ProjectDetailPage() {
 
   if (!project) return <div className="text-ink-400">Loading...</div>;
 
-  const bidlistSupplierIds = new Set(project.bidlist.map((b) => b.supplier.id));
-  const eligibleToAdd = allSuppliers.filter((s) => !bidlistSupplierIds.has(s.id));
 
   return (
     <div>
       <div className="mb-6">
-        <Link to="/projects" className="text-sm text-ink-400 hover:text-ink-600">← Projects</Link>
+        <Breadcrumb items={[{ label: "Projects", to: "/projects" }, { label: project.name }]} />
         <div className="flex items-start justify-between mt-2">
           <div>
             <h1 className="text-xl font-medium">{project.name}</h1>
             <p className="text-sm text-ink-400">
-              {project.vehicleType}
-              {project.targetMarket ? ` · ${project.targetMarket}` : ""}
+              {project.vehicleType}{project.targetMarket ? ` · ${project.targetMarket}` : ""}
             </p>
           </div>
-          <button onClick={deleteProject} className="text-xs text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 rounded-md px-3 py-1.5 transition-colors">
-            Delete project
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={openEditForm} className="text-xs text-ink-500 hover:text-ink-800 border border-ink-200 hover:border-ink-400 rounded-md px-3 py-1.5 transition-colors">
+              Edit details
+            </button>
+            <button onClick={deleteProject} className="text-xs text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 rounded-md px-3 py-1.5 transition-colors">
+              Delete project
+            </button>
+          </div>
         </div>
+
+        {/* Milestone timeline */}
+        {(() => {
+          const milestones = [
+            { label: "KO",  date: project.milestoneKO },
+            { label: "DR0", date: project.milestoneDR0 },
+            { label: "DR1", date: project.milestoneDR1 },
+            { label: "DR2", date: project.milestoneDR2 },
+            { label: "DR3", date: project.milestoneDR3 },
+            { label: "DR4", date: project.milestoneDR4 },
+            { label: "DR5", date: project.milestoneDR5 },
+          ].filter((m) => m.date);
+          if (!milestones.length) return null;
+          const today = new Date();
+          return (
+            <div className="mt-4 flex items-start gap-0 overflow-x-auto pb-1">
+              {milestones.map((m, i) => {
+                const d = new Date(m.date!);
+                const past = d < today;
+                return (
+                  <div key={m.label} className="flex items-center">
+                    {i > 0 && <div className={`h-px w-10 flex-shrink-0 mt-1 ${past ? "bg-ink-500" : "bg-ink-200"}`} />}
+                    <div className="flex flex-col items-center flex-shrink-0">
+                      <div className={`w-3 h-3 rounded-full border-2 ${past ? "bg-ink-800 border-ink-800" : "bg-white border-ink-300"}`} />
+                      <span className="text-[10px] font-semibold text-ink-700 mt-1 leading-none">{m.label}</span>
+                      <span className="text-[9px] text-ink-400 leading-none mt-0.5">{d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "2-digit" })}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+
+        {showEditForm && (
+          <form onSubmit={saveEdit} className="mt-4 card space-y-4">
+            <h2 className="text-sm font-medium">Edit project details</h2>
+            <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs text-ink-400 mb-1">Project name *</label>
+                <input className="input" value={editForm.name} onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))} required />
+              </div>
+              <div>
+                <label className="block text-xs text-ink-400 mb-1">Vehicle type *</label>
+                <input className="input" value={editForm.vehicleType} onChange={(e) => setEditForm((f) => ({ ...f, vehicleType: e.target.value }))} required />
+              </div>
+              <div>
+                <label className="block text-xs text-ink-400 mb-1">Target market</label>
+                <input className="input" value={editForm.targetMarket} onChange={(e) => setEditForm((f) => ({ ...f, targetMarket: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-xs text-ink-400 mb-1">SOP date</label>
+                <input className="input" type="date" value={editForm.sop} onChange={(e) => setEditForm((f) => ({ ...f, sop: e.target.value }))} />
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-ink-500 mb-2">Project milestones</p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {(["milestoneKO", "milestoneDR0", "milestoneDR1", "milestoneDR2", "milestoneDR3", "milestoneDR4", "milestoneDR5"] as const).map((key) => (
+                  <div key={key}>
+                    <label className="block text-xs text-ink-400 mb-1">{key === "milestoneKO" ? "KO" : key.replace("milestone", "").replace("DR", "DR ")}</label>
+                    <input className="input text-sm" type="date" value={editForm[key]} onChange={(e) => setEditForm((f) => ({ ...f, [key]: e.target.value }))} />
+                  </div>
+                ))}
+              </div>
+            </div>
+            {editError && <p className="text-xs text-red-600">{editError.replace(/_/g, " ")}</p>}
+            <div className="flex gap-2 justify-end">
+              <button type="button" onClick={() => setShowEditForm(false)} className="btn-secondary text-xs">Cancel</button>
+              <button type="submit" disabled={editSubmitting} className="btn-primary text-xs">
+                {editSubmitting ? "Saving..." : "Save changes"}
+              </button>
+            </div>
+          </form>
+        )}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-medium uppercase tracking-wide text-ink-400">RFIs</h2>
-            <button onClick={() => setShowRfiForm(!showRfiForm)} className="btn-secondary text-xs">
+            <button onClick={() => { setShowRfiForm(!showRfiForm); if (showRfiForm) setRfiParsedFile(null); }} className="btn-secondary text-xs">
               {showRfiForm ? "Cancel" : "+ New RFI"}
             </button>
           </div>
@@ -530,95 +691,87 @@ export default function ProjectDetailPage() {
           {project.rfis.length === 0 && !showRfiForm && (
             <p className="text-sm text-ink-400">No RFIs yet. Click + New RFI to create one.</p>
           )}
-          {project.rfis.map((rfi) => (
-            <div key={rfi.id} className="card">
-              <div className="flex items-start justify-between mb-3">
-                <Link to={`/rfis/${rfi.id}`} className="flex-1 hover:opacity-80 transition">
-                  <h3 className="font-medium">{rfi.title}</h3>
-                  <p className="text-sm text-ink-400 mt-1">{rfi.componentCategory}</p>
-                </Link>
-                <div className="flex items-center gap-2 ml-3 flex-shrink-0">
-                  <span className="text-xs text-ink-400">{rfi.status}</span>
+          <div className="space-y-3">
+            {project.rfis.map((rfi) => (
+              <div key={rfi.id} className="card group">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <Link to={`/rfis/${rfi.id}`} className="font-medium text-ink-900 hover:text-accent-600 transition-colors">
+                      {rfi.title}
+                    </Link>
+                    <p className="text-xs text-ink-400 mt-0.5">{rfi.componentCategory} · <span className="capitalize">{rfi.status}</span></p>
+                  </div>
                   <button
                     onClick={() => deleteRfi(rfi.id, rfi.title)}
-                    className="text-xs text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 rounded px-2 py-0.5 transition-colors"
+                    className="text-xs text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity ml-4 flex-shrink-0"
                   >
                     Delete
                   </button>
                 </div>
-              </div>
-              {project.bidlist.length > 0 && (
-                <div className="border-t border-ink-100 pt-3">
-                  <p className="text-xs uppercase tracking-wide text-ink-400 mb-2">Sessions per supplier</p>
-                  <div className="flex flex-wrap gap-2">
-                    {project.bidlist.map((b) => {
-                      const k = `${rfi.id}:${b.supplier.id}`;
-                      return (
-                        <button
-                          key={b.supplier.id}
-                          onClick={() => createSession(rfi.id, b.supplier.id)}
-                          disabled={creatingSessionFor === k}
-                          className="btn-secondary text-xs"
-                        >
-                          {creatingSessionFor === k ? "Opening..." : `→ ${b.supplier.name}`}
-                        </button>
-                      );
-                    })}
+                <div className="mt-3 pt-3 border-t border-ink-100">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[10px] font-mono uppercase tracking-widest text-ink-400">Bid list</p>
+                    {allSuppliers.length > 0 && (
+                      <button
+                        onClick={() => { setAddingToRfi(addingToRfi === rfi.id ? null : rfi.id); setAddSupplierPick(""); }}
+                        className="text-xs text-accent-600 hover:text-accent-800"
+                      >
+                        {addingToRfi === rfi.id ? "Cancel" : "+ Add supplier"}
+                      </button>
+                    )}
                   </div>
-                  <p className="text-xs text-ink-400 mt-2">
-                    Clicking a supplier opens (or creates) a pending session. Hit "Start session" inside to run agents.
-                  </p>
+                  {addingToRfi === rfi.id && (
+                    <div className="flex gap-2 mb-2">
+                      <select
+                        className="input text-xs flex-1"
+                        value={addSupplierPick}
+                        onChange={(e) => setAddSupplierPick(e.target.value)}
+                      >
+                        <option value="">Pick a supplier…</option>
+                        {allSuppliers
+                          .filter((s) => !rfi.bidlist.some((b) => b.supplier.id === s.id))
+                          .map((s) => <option key={s.id} value={s.id}>{s.name}</option>)
+                        }
+                      </select>
+                      <button
+                        onClick={() => addSupplierToRfi(rfi.id)}
+                        disabled={!addSupplierPick}
+                        className="btn-primary text-xs"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  )}
+                  {rfi.bidlist.length === 0 ? (
+                    <p className="text-xs text-ink-400">{allSuppliers.length === 0 ? "No suppliers available." : "No suppliers added yet."}</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {rfi.bidlist.map((b) => {
+                        const k = `${rfi.id}:${b.supplier.id}`;
+                        return (
+                          <div key={b.supplier.id} className="flex items-center gap-1">
+                            <button
+                              onClick={() => createSession(rfi.id, b.supplier.id)}
+                              disabled={creatingSessionFor === k}
+                              className="btn-secondary text-xs"
+                            >
+                              {creatingSessionFor === k ? "Opening…" : `→ ${b.supplier.name}`}
+                            </button>
+                            <button
+                              onClick={() => removeFromRfiBidlist(rfi.id, b.supplier.id)}
+                              className="text-ink-300 hover:text-red-500 text-xs leading-none"
+                              title="Remove from bid list"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-medium uppercase tracking-wide text-ink-400">Bid list</h2>
-            {eligibleToAdd.length > 0 && (
-              <button onClick={() => setAdding(!adding)} className="btn-secondary text-xs">
-                {adding ? "Cancel" : "+ Add"}
-              </button>
-            )}
-          </div>
-          {adding && (
-            <div className="card mb-3 space-y-2">
-              <select
-                className="input text-sm"
-                value={pickedSupplierId}
-                onChange={(e) => setPickedSupplierId(e.target.value)}
-              >
-                <option value="">Pick a supplier...</option>
-                {eligibleToAdd.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-              <button onClick={addToBidlist} disabled={!pickedSupplierId} className="btn-primary text-xs w-full">
-                Add to bid list
-              </button>
-            </div>
-          )}
-          <div className="card">
-            {project.bidlist.length === 0 ? (
-              <p className="text-sm text-ink-400">
-                No suppliers on bid list yet. {allSuppliers.length === 0 ? "Add suppliers from the Suppliers page first." : "Click + Add above."}
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {project.bidlist.map((b) => (
-                  <Link
-                    key={b.supplier.id}
-                    to={`/suppliers/${b.supplier.id}`}
-                    className="block hover:bg-ink-50 -mx-3 px-3 py-1.5 rounded-md transition"
-                  >
-                    <p className="text-sm">{b.supplier.name}</p>
-                    <p className="text-xs text-ink-400">{b.supplier.contactEmail}</p>
-                  </Link>
-                ))}
               </div>
-            )}
+            ))}
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
+import { Breadcrumb } from "../components/Breadcrumb";
 
 type Ranked = {
   supplierId: string;
@@ -33,11 +34,27 @@ function Bar({ value, color }: { value: number; color: string }) {
 
 export default function ComparisonPage() {
   const { id } = useParams();
-  const [data, setData] = useState<{ rfi: { id: string; title: string }; ranked: Ranked[] } | null>(null);
+  const [data, setData] = useState<{ rfi: { id: string; title: string; project: { id: string; name: string } }; ranked: Ranked[] } | null>(null);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     api.get(`/rfis/${id}/comparison`).then((r) => setData(r.data));
   }, [id]);
+
+  async function downloadExcel() {
+    setDownloading(true);
+    try {
+      const r = await api.get(`/rfis/${id}/comparison/export`, { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([r.data]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${data?.rfi.title ?? "comparison"}_comparison.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   if (!data) return <div className="text-ink-400">Loading...</div>;
 
@@ -47,13 +64,30 @@ export default function ComparisonPage() {
   return (
     <div>
       <div className="mb-6">
-        <Link to={`/rfis/${data.rfi.id}`} className="text-sm text-ink-400 hover:text-ink-600">
-          ← {data.rfi.title}
-        </Link>
-        <h1 className="text-xl font-medium mt-2">Supplier comparison</h1>
-        <p className="text-sm text-ink-400 mt-1">
-          Ranked by weighted score. Suppliers failing must-have parameters are shown separately.
-        </p>
+        <Breadcrumb items={[
+          { label: "Projects", to: "/projects" },
+          { label: data.rfi.project.name, to: `/projects/${data.rfi.project.id}` },
+          { label: data.rfi.title, to: `/rfis/${data.rfi.id}` },
+          { label: "Supplier comparison" },
+        ]} />
+        <div className="flex items-start justify-between mt-2">
+          <div>
+            <h1 className="text-xl font-medium">Supplier comparison</h1>
+            <p className="text-sm text-ink-400 mt-1">
+              Ranked by weighted score. Suppliers failing must-have parameters are shown separately.
+            </p>
+          </div>
+          <button
+            onClick={downloadExcel}
+            disabled={downloading}
+            className="btn-secondary flex items-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
+            {downloading ? "Downloading…" : "Download Excel"}
+          </button>
+        </div>
       </div>
 
       {eligible.length > 0 && (

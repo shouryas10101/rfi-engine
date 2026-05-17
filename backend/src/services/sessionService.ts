@@ -8,22 +8,12 @@ import {
   type ParameterAnswerSummary,
 } from "../domain/phaseMachine.js";
 import { ParameterSpecSchema, type Phase, type ParameterSpec } from "../domain/parameter.js";
-import { buildComplianceReport } from "../compliance/report.js";
-import { tmlAgentTurn } from "../agents/tmlAgent.js";
-import { supplierAgentTurn } from "../agents/supplierAgent.js";
+import { buildComplianceReport, type VariantStatus } from "../compliance/report.js";
+import { tmlAgentTurn, tmlGreetingTurn, tmlIntroTurn, tmlAcknowledgementTurn } from "../agents/tmlAgent.js";
+import { supplierAgentTurn, supplierGreetingResponse, supplierIntroAck } from "../agents/supplierAgent.js";
 import { getPriorContextForSession } from "./contextService.js";
 import type { Document, RFIParameter } from "@prisma/client";
 
-export type VariantStatus = {
-  productCode: string;
-  status: "active" | "eliminated";
-  eliminatedAt: string | null;
-  eliminationReason: string | null;
-  mhPassed: number;
-  mhTotal: number;
-  gthMatched: number;
-  gthTotal: number;
-};
 
 /** Format a raw catalogue value into a string the deterministic evaluator can parse. */
 function formatForEval(value: unknown): string {
@@ -272,14 +262,63 @@ export async function runOneStep(sessionId: string, tenantId: string): Promise<b
     session.id,
   );
 
-  // Fetch recent agent turns for conversational context (last 6 = ~3 Q&A pairs)
+  // ── Greeting exchange (step 0) ───────────────────────────────────────────
+  const priorTmlTurnCount = await prisma.turn.count({
+    where: { sessionId, authorRole: "tml_agent" },
+  });
+
+  if (priorTmlTurnCount === 0) {
+    const greeting = await tmlGreetingTurn({
+      supplierName: session.supplier.name,
+      componentCategory: session.rfi.componentCategory,
+    });
+    await prisma.turn.create({
+      data: { sessionId, authorRole: "tml_agent", content: greeting.text },
+    });
+    const supplierGreeting = await supplierGreetingResponse({
+      supplierName: session.supplier.name,
+      tmlGreeting: greeting.text,
+    });
+    await prisma.turn.create({
+      data: { sessionId, authorRole: "supplier_agent", content: supplierGreeting.text },
+    });
+    return true;
+  }
+
+  // ── Project intro exchange (step 1) ─────────────────────────────────────
+  if (priorTmlTurnCount === 1) {
+    const introTurn = await tmlIntroTurn({
+      rfiTitle: session.rfi.title,
+      componentCategory: session.rfi.componentCategory,
+      project: {
+        name: session.rfi.project.name,
+        vehicleType: session.rfi.project.vehicleType,
+        targetMarket: session.rfi.project.targetMarket,
+        sop: session.rfi.project.sop ? session.rfi.project.sop.toISOString() : null,
+      },
+      documents: rfiDocs,
+    });
+    await prisma.turn.create({
+      data: { sessionId, authorRole: "tml_agent", content: introTurn.text },
+    });
+    const supplierAck = await supplierIntroAck({
+      supplierName: session.supplier.name,
+      introMessage: introTurn.text,
+    });
+    await prisma.turn.create({
+      data: { sessionId, authorRole: "supplier_agent", content: supplierAck.text },
+    });
+    return true;
+  }
+
+  // Fetch recent agent turns for conversational context (last 8 = ~4 Q&A pairs + acks)
   const recentTurns = await prisma.turn.findMany({
     where: {
       sessionId,
       authorRole: { in: ["tml_agent", "supplier_agent"] },
     },
     orderBy: { createdAt: "desc" },
-    take: 6,
+    take: 8,
   });
   const recentHistory = recentTurns.reverse().map((t) => ({
     role: t.authorRole === "tml_agent" ? "tml" as const : "supplier" as const,
@@ -317,6 +356,34 @@ export async function runOneStep(sessionId: string, tenantId: string): Promise<b
     productCode: item.productCode,
     params: item.parameters as Record<string, unknown>,
   }));
+
+  // ── Acknowledgement turn (separate message before each question) ─────────
+  // Only after at least one parameter has been answered — skip for the first question.
+  // IMPORTANT: use the LAST ANSWERED parameter's spec, not the next pending one.
+  if (answeredIds.size > 0) {
+    const lastSupplierTurnRaw = recentTurns.find((t) => t.authorRole === "supplier_agent" && t.parameterId);
+    const lastAnsweredParam = lastSupplierTurnRaw?.parameterId
+      ? session.rfi.parameters.find((p) => p.id === lastSupplierTurnRaw.parameterId)
+      : null;
+    const lastSupplierContent = recentHistory.filter((t) => t.role === "supplier").pop();
+
+    if (lastSupplierContent && lastAnsweredParam) {
+      let lastAnsweredSpec: ParameterSpec;
+      try { lastAnsweredSpec = ParameterSpecSchema.parse(lastAnsweredParam.spec); } catch { lastAnsweredSpec = spec; }
+      const ackTurn = await tmlAcknowledgementTurn({
+        lastSupplierAnswer: lastSupplierContent.content,
+        parameter: {
+          label: lastAnsweredParam.label,
+          spec: lastAnsweredSpec,
+          importance: lastAnsweredParam.importance,
+          phase: lastAnsweredParam.phase,
+        },
+      });
+      await prisma.turn.create({
+        data: { sessionId, authorRole: "tml_agent", content: ackTurn.text },
+      });
+    }
+  }
 
   // All phases: TML asks question → Supplier responds
   const tmlTurn = await tmlAgentTurn({
@@ -698,12 +765,57 @@ export async function generateAndStoreReport(sessionId: string): Promise<void> {
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
     include: {
-      rfi: { include: { project: true } },
-      supplier: true,
+      rfi: { include: { project: true, parameters: true } },
+      supplier: { include: { catalogue: true } },
       responses: { include: { parameter: true } },
+      turns: { orderBy: { createdAt: "asc" } },
     },
   });
   if (!session) return;
+
+  // Compute per-variant statuses for the report
+  const nc = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, "");
+  const tCat = nc(session.rfi.componentCategory);
+  const relCatalogue = session.supplier.catalogue.filter((item) => {
+    const ic = nc(item.componentCategory);
+    return ic === tCat || ic.includes(tCat) || tCat.includes(ic);
+  });
+  const mhParams = session.rfi.parameters.filter((p) => p.phase === "must_have");
+  const gthParams = session.rfi.parameters.filter((p) => p.phase === "good_to_have");
+  const mhResponses = session.responses.filter((r) => r.parameter.phase === "must_have");
+  const elimTurns = session.turns.filter(
+    (t) => t.authorRole === "system" && t.content.startsWith("ELIM —"),
+  );
+  const gthTurns = session.turns.filter(
+    (t) => t.authorRole === "system" &&
+      (t.content.startsWith("GTH_PASS —") || t.content.startsWith("GTH_FAIL —")),
+  );
+  const eliminated = computeEliminated(relCatalogue, mhResponses, elimTurns);
+
+  const variantStatuses: VariantStatus[] = relCatalogue.map((item) => {
+    const params = item.parameters as Record<string, unknown>;
+    const elim = eliminated[item.productCode];
+    let mhPassed = 0;
+    for (const resp of mhResponses) {
+      if (elim && elim.eliminatedAt === resp.parameter.label) break;
+      let spec: ParameterSpec;
+      try { spec = ParameterSpecSchema.parse(resp.parameter.spec); } catch { mhPassed++; continue; }
+      if (spec.type === "text" || spec.type === "subjective") { mhPassed++; continue; }
+      const val = findCatalogueValue(params, resp.parameter.key, resp.parameter.label);
+      if (checkVariantValue(val, spec) !== "fail") mhPassed++;
+      else break;
+    }
+    return {
+      productCode: item.productCode,
+      status: elim ? "eliminated" : "active",
+      eliminatedAt: elim?.eliminatedAt ?? null,
+      eliminationReason: elim?.eliminationReason ?? null,
+      mhPassed,
+      mhTotal: mhParams.length,
+      gthMatched: computeGthMatched(item.productCode, gthTurns),
+      gthTotal: gthParams.length,
+    };
+  });
 
   const payload = buildComplianceReport({
     rfi: {
@@ -741,6 +853,7 @@ export async function generateAndStoreReport(sessionId: string): Promise<void> {
       modificationDistance: r.modificationDistance,
       evaluatedBy: r.evaluatedBy,
     })),
+    variants: variantStatuses,
   });
 
   await prisma.complianceReport.create({
