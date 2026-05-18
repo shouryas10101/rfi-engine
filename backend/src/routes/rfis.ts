@@ -302,6 +302,39 @@ function fmtGap(verdict: string, rationale: string): string {
   return verdict;
 }
 
+/** Extract a clean short value from a catalogue item's parameters for a given RFI parameter. */
+function catalogueValueStr(
+  params: Record<string, unknown>,
+  key: string,
+  label: string,
+): string {
+  const norm = (s: string) => String(s).toLowerCase().replace(/[^a-z0-9]/g, "");
+  const nKey = norm(key);
+  const nLabel = norm(label);
+
+  let found: unknown;
+  outer: for (const passes of [
+    // exact normalised match
+    (k: string) => norm(k) === nKey || norm(k) === nLabel,
+    // substring containment
+    (k: string) => { const nk = norm(k); return nk.includes(nKey) || nKey.includes(nk) || nk.includes(nLabel) || nLabel.includes(nk); },
+    // token overlap
+    (k: string) => {
+      const tokens = [...new Set([...(nKey.match(/[a-z0-9]{3,}/g) ?? []), ...(nLabel.match(/[a-z0-9]{3,}/g) ?? [])])];
+      const kToks = norm(k).match(/[a-z0-9]{3,}/g) ?? [];
+      return tokens.some((t) => kToks.some((kt) => kt.includes(t) || t.includes(kt)));
+    },
+  ]) {
+    for (const [k, v] of Object.entries(params)) {
+      if (passes(k)) { found = v; break outer; }
+    }
+  }
+
+  if (found === undefined || found === null) return "—";
+  if (typeof found === "object") return JSON.stringify(found);
+  return String(found);
+}
+
 router.get(
   "/:id/comparison/export",
   requireRole("TML_ADMIN", "TML_ENGINEER"),
@@ -314,36 +347,84 @@ router.get(
           include: {
             supplier: true,
             responses: { include: { parameter: true } },
+            reports: { orderBy: { generatedAt: "desc" }, take: 1 },
           },
         },
       },
     });
     if (!rfi) { res.status(404).json({ error: "not_found" }); return; }
 
-    const sessions = rfi.sessions;
     const params = rfi.parameters;
 
-    // ── Row 1: supplier name group headers ───────────────────────────────────
+    // For each session, load all catalogue variants for this supplier + component category
+    type VariantCol = { supplierName: string; variantCode: string; params: Record<string, unknown> };
+    const variantCols: VariantCol[] = [];
+
+    for (const s of rfi.sessions) {
+      const catalogueItems = await prisma.catalogueItem.findMany({
+        where: { supplierId: s.supplier.id, componentCategory: { equals: rfi.componentCategory, mode: "insensitive" } },
+        orderBy: { productCode: "asc" },
+      });
+
+      // Get variant statuses from the latest compliance report
+      type StoredVariant = { productCode: string; status: string; eliminationReason: string | null };
+      const reportPayload = s.reports[0]?.payload as { variants?: { all?: StoredVariant[] } } | undefined;
+      const storedVariants: StoredVariant[] = reportPayload?.variants?.all ?? [];
+
+      if (catalogueItems.length === 0) {
+        // No catalogue — fall back to a single column using rawResponse
+        variantCols.push({ supplierName: s.supplier.name, variantCode: "", params: {} });
+      } else {
+        for (const item of catalogueItems) {
+          const sv = storedVariants.find((v) => v.productCode === item.productCode);
+          if (sv?.status === "eliminated") continue;
+          variantCols.push({
+            supplierName: s.supplier.name,
+            variantCode: item.productCode,
+            params: item.parameters as Record<string, unknown>,
+          });
+        }
+      }
+    }
+
+    // ── Row 1: supplier name group headers (merged across variant columns) ────
     const row1: (string | null)[] = ["", "", "", ""];
-    for (const s of sessions) row1.push(s.supplier.name, null);
+    for (const vc of variantCols) row1.push(vc.supplierName, null);
 
-    // ── Row 2: column headers ────────────────────────────────────────────────
+    // ── Row 2: column headers ─────────────────────────────────────────────────
     const row2: string[] = ["Sr No", "Parameters", "TML Requirement", "Unit"];
-    for (const _s of sessions) row2.push("Supplier Offering", "Gap");
+    for (const vc of variantCols) {
+      const colLabel = vc.variantCode ? `${vc.supplierName} - ${vc.variantCode}` : vc.supplierName;
+      row2.push(colLabel, "Gap");
+    }
 
-    // ── Data rows ────────────────────────────────────────────────────────────
+    // Build a lookup: sessionId → responses map
+    const sessionResponseMap = new Map(
+      rfi.sessions.map((s) => [s.id, new Map(s.responses.map((r) => [r.parameterId, r]))])
+    );
+    // Build sessionId lookup by supplierName (for fallback variant cols)
+    const sessionBySupplier = new Map(rfi.sessions.map((s) => [s.supplier.name, s]));
+
+    // ── Data rows ─────────────────────────────────────────────────────────────
     const dataRows = params.map((p, idx) => {
       const spec = p.spec as Record<string, unknown>;
-      const row: (string | number | null)[] = [
-        idx + 1,
-        p.label,
-        fmtRequirement(spec),
-        fmtUnit(spec),
-      ];
-      for (const s of sessions) {
-        const r = s.responses.find((r) => r.parameterId === p.id);
-        row.push(r?.rawResponse ?? "—");
-        row.push(r ? fmtGap(r.verdict, r.rationale) : "—");
+      const row: (string | number | null)[] = [idx + 1, p.label, fmtRequirement(spec), fmtUnit(spec)];
+
+      for (const vc of variantCols) {
+        if (vc.variantCode && Object.keys(vc.params).length > 0) {
+          // Use the actual catalogue value for this variant
+          row.push(catalogueValueStr(vc.params, p.key, p.label));
+          // Gap: use the session-level verdict (applies to active variants)
+          const sess = sessionBySupplier.get(vc.supplierName);
+          const r = sess ? sessionResponseMap.get(sess.id)?.get(p.id) : undefined;
+          row.push(r ? fmtGap(r.verdict, r.rationale) : "—");
+        } else {
+          // Fallback: no catalogue, use rawResponse
+          const sess = sessionBySupplier.get(vc.supplierName);
+          const r = sess ? sessionResponseMap.get(sess.id)?.get(p.id) : undefined;
+          row.push(r?.rawResponse ?? "—");
+          row.push(r ? fmtGap(r.verdict, r.rationale) : "—");
+        }
       }
       return row;
     });
@@ -351,19 +432,24 @@ router.get(
     const wsData = [row1, row2, ...dataRows];
     const ws = XLSX.utils.aoa_to_sheet(wsData);
 
-    // Merge supplier name headers across Offering + Gap cols
-    ws["!merges"] = sessions.map((_, i) => ({
-      s: { r: 0, c: 4 + i * 2 },
-      e: { r: 0, c: 5 + i * 2 },
-    }));
+    // Merge supplier name headers: group consecutive variant cols per supplier
+    const merges: { s: { r: number; c: number }; e: { r: number; c: number } }[] = [];
+    let col = 4;
+    let i = 0;
+    while (i < variantCols.length) {
+      const name = variantCols[i]!.supplierName;
+      let j = i;
+      while (j < variantCols.length && variantCols[j]!.supplierName === name) j++;
+      const spanCols = (j - i) * 2;
+      if (spanCols > 1) merges.push({ s: { r: 0, c: col }, e: { r: 0, c: col + spanCols - 1 } });
+      col += spanCols;
+      i = j;
+    }
+    ws["!merges"] = merges;
 
-    // Column widths
     ws["!cols"] = [
-      { wch: 6 },
-      { wch: 32 },
-      { wch: 28 },
-      { wch: 10 },
-      ...sessions.flatMap(() => [{ wch: 45 }, { wch: 22 }]),
+      { wch: 6 }, { wch: 32 }, { wch: 28 }, { wch: 10 },
+      ...variantCols.flatMap(() => [{ wch: 22 }, { wch: 22 }]),
     ];
 
     const wb = XLSX.utils.book_new();
