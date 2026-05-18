@@ -34,7 +34,7 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         <div className="flex flex-col items-center mb-6">
           <img src="/tata-logo.svg" alt="Tata" className="h-40 mb-4" />
-          <h1 className="text-2xl font-medium mb-1 text-center">Setu Portal</h1>
+          <h1 className="text-2xl font-medium mb-1 text-center">Setu</h1>
           <p className="text-sm text-ink-400 text-center">Sign in to continue</p>
         </div>
         <form onSubmit={onSubmit} className="card space-y-4">

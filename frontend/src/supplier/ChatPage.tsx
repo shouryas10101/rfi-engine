@@ -59,7 +59,7 @@ type SessionDetail = {
   variantStatuses: VariantStatus[];
 };
 
-const POLL_INTERVAL_MS = 1500;
+const POLL_INTERVAL_MS = 300;
 
 const PHASE_LIST = [
   { id: "general",      label: "General",       color: "bg-ink-400" },
