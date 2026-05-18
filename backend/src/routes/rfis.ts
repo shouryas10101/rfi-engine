@@ -273,7 +273,7 @@ router.get(
 
 function fmtRequirement(spec: Record<string, unknown>): string {
   switch (spec.type) {
-    case "boolean": return "Compliant: Yes";
+    case "boolean": return "Compliant";
     case "numeric_range": {
       const mn = spec.min as number | null;
       const mx = spec.max as number | null;
@@ -282,11 +282,11 @@ function fmtRequirement(spec: Record<string, unknown>): string {
       if (mn != null) return `≥ ${mn} ${u}`.trim();
       return `≤ ${mx ?? "∞"} ${u}`.trim();
     }
-    case "numeric_exact": return `= ${spec.value} ± ${spec.tolerance ?? 0} ${spec.unit ?? ""}`.trim();
-    case "numeric_subset_range": return `${spec.min} – ${spec.max} ${spec.unit ?? ""} (full range)`.trim();
-    case "enum": return `One of: ${(spec.allowed as string[]).join(", ")}`;
-    case "subjective": return (spec.description as string) ?? "";
-    case "text": return (spec.prompt as string) ?? "";
+    case "numeric_exact": return `${spec.value} ± ${spec.tolerance ?? 0} ${spec.unit ?? ""}`.trim();
+    case "numeric_subset_range": return `${spec.min} – ${spec.max} ${spec.unit ?? ""}`.trim();
+    case "enum": return (spec.allowed as string[]).join(" / ");
+    case "subjective": return (spec.acceptanceCriteria as string) ?? (spec.description as string) ?? "";
+    case "text": return (spec.acceptanceCriteria as string) ?? "";
     default: return "";
   }
 }
